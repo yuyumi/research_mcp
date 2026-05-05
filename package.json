@@ -1,7 +1,7 @@
 {
   "name": "research-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for research workflows — fetch PDFs, write binary files, manage literature folders",
+  "version": "3.0.0",
+  "description": "Unified MCP server for research workflows — filesystem, PDF fetching, literature management, LaTeX/Overleaf sync",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "zod": "^3.22.0"
   },
   "license": "MIT"
 }

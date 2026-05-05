@@ -1,8 +1,23 @@
 # research-mcp
 
-A lightweight MCP server for academic research workflows. Lets Claude download PDFs from URLs, manage literature folders, and create paper summaries directly on your local filesystem.
+A lightweight MCP server for research workflows. Provides generic filesystem access plus research-specific tools for managing literature folders and downloading PDFs.
 
 ## Tools
+
+### Filesystem
+
+| Tool | Description |
+|------|-------------|
+| `fs_read` | Read text content of a file (supports `head`/`tail` for partial reads) |
+| `fs_write` | Write text content to a file, creating parent directories as needed |
+| `fs_move` | Move or rename a file or directory |
+| `fs_copy` | Copy a file |
+| `fs_delete` | Delete a file or directory (recursive) |
+| `fs_list` | List directory contents with file sizes |
+| `fs_mkdir` | Create a directory and all parent directories |
+| `fs_exists` | Check whether a path exists |
+
+### Research
 
 | Tool | Description |
 |------|-------------|
@@ -28,13 +43,6 @@ Edit your Claude Desktop config file:
 ```json
 {
   "mcpServers": {
-    "filesystem": {
-      "command": "npx",
-      "args": [
-        "@modelcontextprotocol/server-filesystem",
-        "/path/to/your/research/directory"
-      ]
-    },
     "research": {
       "command": "node",
       "args": ["/path/to/research_mcp/src/index.js"],
@@ -46,26 +54,11 @@ Edit your Claude Desktop config file:
 }
 ```
 
-Replace `/path/to/your/research/directory` with the root folder you want Claude to access, and `/path/to/research_mcp` with wherever you cloned this repo.
+`ALLOWED_ROOT` is required — the server will refuse to start without it. All file operations are restricted to paths under this directory.
 
 ### 3. Restart Claude Desktop
 
-The research MCP will now be available in all conversations.
-
-## Usage examples
-
-**Download a PDF:**
-> "Download the Gao et al. scaling laws paper from https://arxiv.org/pdf/2210.10760 and save it to the literature/gao_et_al_2023 folder"
-
-**List literature status:**
-> "List all papers in my literature folder"
-
-**Add a new paper with PDF:**
-> "Add a summary and download the PDF for Tang et al. 2026 from arxiv"
-
 ## Literature folder structure
-
-The server works best with a consistent folder structure:
 
 ```
 literature/
@@ -77,13 +70,12 @@ literature/
 │   └── paper.pdf
 ```
 
-Each `summary.txt` should contain the paper's key contributions, theorems, and relevance to your research.
-
 ## Security
 
-All file writes are restricted to `ALLOWED_ROOT`. Paths outside this directory are rejected. Never set `ALLOWED_ROOT` to a sensitive system directory.
+- `ALLOWED_ROOT` is required — the server exits on startup if not set
+- All file operations reject paths outside `ALLOWED_ROOT`
+- No network access except for `fetch_pdf` and `add_paper` PDF downloads
 
 ## Requirements
 
 - Node.js >= 18
-- Claude Desktop
