@@ -1,17 +1,18 @@
 # research-mcp
 
-A unified MCP server for research workflows. One server handles filesystem access, paper acquisition with enforced summaries, and LaTeX/Overleaf project sync — with a citation gate that refuses to push uncited or unsummarized work.
+A unified MCP server for research workflows. One server handles filesystem access, paper acquisition with enforced reads and summaries, and LaTeX/Overleaf project sync — with a citation gate that refuses to push uncited or unsummarized work.
 
 ## What this enforces
 
 When you cite something in your .tex, you must have read it. When you've read it, you must have summarized it. The MCP enforces both:
 
 - `add_paper` acquires the PDF into a per-paper folder under the project's `research_folder`. The folder is the proof of acquisition.
-- `write_summary` records a four-field schema (contributions, weaknesses, relevance, key result) into `summary.md`. It refuses to run unless a PDF is present — you can't summarize what you haven't downloaded.
+- After the PDF is on disk, the agent reads it through its client (typically by asking the user to upload the PDF to the conversation), then calls `pdf_read_check` with a paper-specific attestation. This writes `.read_log.json` — proof of reading.
+- `write_summary` records a four-field schema (contributions, weaknesses, relevance, key result) into `summary.md`. It refuses unless `.read_log.json` is present AND matches the current PDF's size/mtime — replacing the PDF invalidates the log.
 - `commit_and_push` scans every `\cite*{}` in your .tex files and refuses to push if any cited key lacks a complete summary.
 - A failed PDF fetch is sticky: a `.fetch_failed.json` marker is dropped and the paper folder becomes read-only to the MCP (modifying tools refuse; reads still work for diagnostics). Only the user can clear the marker, from outside the MCP.
 
-The goal is to make "I cited a paper I didn't read" impossible to do accidentally.
+The goal is to make "I cited a paper I didn't read" impossible to do accidentally. The read-check is honor-system on content (the MCP can't verify the agent actually processed the PDF), but the schema-validated paper-specific attestation raises the cost of skipping the step.
 
 ---
 
@@ -32,14 +33,15 @@ All operations are scoped to `ALLOWED_ROOT`. Modifying operations are additional
 | `fs_copy` | Copy a file | modify |
 
 ### Literature
-All four require `projectName` (no default). The paper folder for `citation_key` lives at `<projects[projectName].research_folder>/<citation_key>/`.
+All five require `projectName` (no default). The paper folder for `citation_key` lives at `<projects[projectName].research_folder>/<citation_key>/`.
 
 | Tool | Description |
 |------|-------------|
-| `add_paper` | Acquire a paper: ensures the folder exists and contains a PDF. Does NOT write a summary. |
-| `write_summary` | Write a schema-validated `summary.md`. Requires the folder + a PDF to be present. |
+| `add_paper` | Acquire a paper: ensures the folder exists and contains a PDF. Does NOT write a summary. After success, ask the user to upload the PDF so you can read it. |
+| `pdf_read_check` | Attest the agent has read the paper. Takes a 30–500 char paper-specific `attestation` string and writes `.read_log.json` with the current PDF's size/mtime. Required between `add_paper` and `write_summary`. |
+| `write_summary` | Write a schema-validated `summary.md`. Requires folder, PDF, no marker, and a current read log matching the PDF. |
 | `get_summary` | Read and parse the summary for a citation_key. |
-| `list_summaries` | List every paper folder in the project's `research_folder` with summary/PDF/marker status. |
+| `list_summaries` | List every paper folder with summary status, PDF presence, read-log freshness, and marker presence. |
 
 ### LaTeX / Overleaf
 All require `projectName` (no default). All write operations are **local only** — the remote is never touched until you explicitly call `commit_and_push`.
@@ -166,16 +168,23 @@ Both `ALLOWED_ROOT` and `projects.json` are optional — if either is missing th
 ### Citing a new paper
 
 ```
-# Acquire the PDF — creates <research_folder>/ouyang2022training/paper.pdf
+# 1. Acquire the PDF — creates <research_folder>/ouyang2022training/paper.pdf
 add_paper(
   projectName  = "myproject",
   citation_key = "ouyang2022training",
   pdf_url      = "https://arxiv.org/pdf/2203.02155"
 )
 
-# (Read the PDF)
+# 2. User uploads paper.pdf to the conversation; the agent reads it natively.
 
-# Record the schema — writes <research_folder>/ouyang2022training/summary.md
+# 3. Attest the read — writes .read_log.json
+pdf_read_check(
+  projectName  = "myproject",
+  citation_key = "ouyang2022training",
+  attestation  = "Read InstructGPT. Three-stage RLHF: SFT, RM training on preferences, PPO. 1.3B model preferred over 175B GPT-3 on API prompts."
+)
+
+# 4. Record the schema — writes summary.md (refuses without a current read log)
 write_summary(
   projectName  = "myproject",
   citation_key = "ouyang2022training",
@@ -187,10 +196,10 @@ write_summary(
   }
 )
 
-# Edit .tex (this is where \cite{ouyang2022training} appears)
+# 5. Edit .tex (this is where \cite{ouyang2022training} appears)
 str_replace projectName="myproject" filePath="sections/preliminaries.tex" ...
 
-# Publish — gate runs first, refuses if any cite lacks a summary
+# 6. Publish — gate runs first, refuses if any cite lacks a summary
 commit_and_push projectName="myproject" message="Add InstructGPT discussion"
 ```
 
@@ -200,10 +209,14 @@ commit_and_push projectName="myproject" message="Add InstructGPT discussion"
 # See what's missing
 validate_citations projectName="myproject"
 
-# Loop add_paper + write_summary for each incomplete key
+# Loop add_paper → upload → pdf_read_check → write_summary for each incomplete key
 
 # Once validate_citations returns no incomplete keys, commit_and_push works
 ```
+
+### Re-reading after the PDF changes
+
+If you replace `paper.pdf` (e.g., updated arxiv version), `.read_log.json` becomes stale. The next `write_summary` will refuse with `pdf_changed_since_read`. Call `pdf_read_check` again to refresh.
 
 ---
 
@@ -213,15 +226,19 @@ validate_citations projectName="myproject"
 <research_folder>/
 ├── ouyang2022training/
 │   ├── paper.pdf
-│   └── summary.md
+│   ├── .read_log.json    <-- written by pdf_read_check
+│   └── summary.md        <-- written by write_summary
 ├── bai2022training/
 │   ├── paper.pdf
+│   ├── .read_log.json
 │   └── summary.md
 └── failed_to_fetch/
     └── .fetch_failed.json   <-- folder is locked against modifying ops until user removes this
 ```
 
 The citation key is the folder name. `summary.md` follows a fixed format with four required sections AND a canonical JSON block in an HTML comment — the JSON block is the source of truth for `validate_citations`. Hand-edits to the markdown body are clobbered on the next `write_summary` call.
+
+`.read_log.json` records the PDF's filename, size, and mtime at attestation time. `write_summary` refuses if these don't match the current PDF, so swapping in a new version forces a re-attest.
 
 ---
 
@@ -240,6 +257,14 @@ Validation is at the MCP tool boundary (Zod). A call with a missing or empty fie
 
 ---
 
+## Read attestation
+
+`pdf_read_check` requires `attestation`: a 30–500 character paper-specific sentence demonstrating the agent has actually processed the paper. The MCP doesn't grade the content — it only checks length. The point is to raise the cost of skipping the read: producing a paper-specific sentence is harder than calling a stub function. Combined with `write_summary`'s schema, this gives reasonable assurance that the agent engaged with the paper.
+
+This is honor-system on content. A determined or dishonest agent can fabricate both the attestation and the summary; no out-of-band mechanism can prevent that without reading the PDF itself (which the MCP doesn't, by design — the client's native PDF handling has higher fidelity).
+
+---
+
 ## Citation gate
 
 `commit_and_push` runs `validate_citations` first. The validator:
@@ -253,7 +278,7 @@ Validation is at the MCP tool boundary (Zod). A call with a missing or empty fie
 
 If any key is missing, has an unparseable summary, or has any empty/over-cap field, the commit is refused with a JSON payload listing every offender and where in the .tex it appears.
 
-The only way through the gate is to `add_paper` + `write_summary` for every incomplete key (or remove the citation from the .tex). The MCP intentionally provides no bypass.
+The only way through the gate is to `add_paper` + `pdf_read_check` + `write_summary` for every incomplete key (or remove the citation from the .tex). The MCP intentionally provides no bypass.
 
 ---
 
@@ -261,7 +286,7 @@ The only way through the gate is to `add_paper` + `write_summary` for every inco
 
 When `add_paper` fails to download a PDF — HTTP error, non-PDF content-type, or network exception — it writes `.fetch_failed.json` into the paper folder containing the URL, error, detail, and timestamp. While that marker exists:
 
-- `add_paper` and `write_summary` refuse for that citation_key.
+- `add_paper`, `pdf_read_check`, and `write_summary` refuse for that citation_key.
 - **Modifying `fs_*` tools refuse to touch anything in or under the folder.** Specifically `fs_write`, `fs_mkdir`, `fs_delete`, `fs_move` (source and destination), `fs_copy` (source and destination) — all blocked, including deletion or rename of the enclosing folder via descendant detection.
 - **Read `fs_*` tools (`fs_read`, `fs_list`, `fs_exists`) remain available.** The agent can still inspect the locked state — read the marker, list the folder, check for the PDF — so it can diagnose the failure and report it to the user clearly.
 - `list_summaries` reports `fetch_failed: true` on the row so you can spot stuck folders.
@@ -290,12 +315,12 @@ src/
 ├── fs_tools.js       — fs_* tools (modifying ops gated by marker checks)
 ├── latex_client.js   — LatexGitClient (git clone/pull/commit/push)
 ├── latex_tools.js    — Overleaf tools (list_projects, read_file, ...)
-├── literature.js     — add_paper, write_summary, get_summary, list_summaries
+├── literature.js     — add_paper, pdf_read_check, write_summary, get_summary, list_summaries
 ├── citations.js      — \cite{} regex + validate_citations
 └── commit.js         — gated commit_and_push
 ```
 
-The split is by concern. `index.js` is ~50 lines: import, register, boot. Each tool file exports a `register(server)` function.
+The split is by concern. `index.js` is thin: import, register, boot. Each tool file exports a `register(server)` function.
 
 ---
 
