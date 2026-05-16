@@ -3,12 +3,14 @@
     "default": {
       "name": "My Paper",
       "projectId": "YOUR_PROJECT_ID",
-      "gitToken": "YOUR_GIT_TOKEN"
+      "gitToken": "YOUR_GIT_TOKEN",
+      "research_folder": "/absolute/path/to/literature_folder_for_this_project"
     },
     "project2": {
       "name": "Another Paper",
-      "projectId": "ANOTHER_PROJECT_ID", 
-      "gitToken": "ANOTHER_GIT_TOKEN"
+      "projectId": "ANOTHER_PROJECT_ID",
+      "gitToken": "ANOTHER_GIT_TOKEN",
+      "research_folder": "/absolute/path/to/another_literature_folder"
     }
   }
 }
