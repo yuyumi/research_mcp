@@ -92,7 +92,7 @@ class LatexGitClient {
     this.projectId = projectId;
     this.gitToken = gitToken;
     this.repoPath = path.join(os.tmpdir(), `overleaf-${projectId}`);
-    this.gitUrl = `https://git.overleaf.com/${projectId}`;
+    this.gitUrl = `https://git:${gitToken}@git.overleaf.com/${projectId}`;
     this._askpassPath = null;
   }
 
